@@ -46,7 +46,7 @@ jobs:
           path: .alert
           key: alert-${{ steps.check.outputs.signature }}-${{ steps.check.outputs.day }}
       - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit == 'true'
-        run: echo "::warning::Still failing, already reported today: $MESSAGE"
+        run: 'echo "::warning::Still failing, already reported today: $MESSAGE"'
         env:
           MESSAGE: ${{ steps.check.outputs.message }}
       - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
