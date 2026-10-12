@@ -29,33 +29,57 @@ jobs:
           EXPECTED_CHANNELS: ${{ vars.EXPECTED_CHANNELS }}
           REQUIRED_SETTINGS: ${{ vars.REQUIRED_SETTINGS }}
           EXPIRY_DOMAIN: ${{ vars.EXPIRY_DOMAIN }}
-      # A failed run sends the email. The same failure fails (and emails) once a
-      # day while it lasts; a different failure fails at once.
-      - id: seen
+      # A failed run sends the email. A problem must still be there on the next
+      # check (about ten minutes later) so brief provider blips that heal on
+      # their own never email. After that, the same failure emails once a day
+      # while it lasts; a different failure emails at once.
+      - id: pending
         if: steps.check.outputs.failed == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .alert
+          key: pending-${{ github.run_id }}
+          restore-keys: pending-
+          lookup-only: true
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key == ''
+        run: mkdir -p .alert && touch .alert/pending
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key == ''
+        uses: actions/cache/save@v4
+        with:
+          path: .alert
+          key: pending-${{ github.run_id }}
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key == ''
+        run: 'echo "::warning::First failed check, emailing if the next one fails too: $MESSAGE"'
+        env:
+          MESSAGE: ${{ steps.check.outputs.message }}
+      - id: seen
+        if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key != ''
         uses: actions/cache/restore@v4
         with:
           path: .alert
           key: alert-${{ steps.check.outputs.signature }}-${{ steps.check.outputs.day }}
           lookup-only: true
-      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key != '' && steps.seen.outputs.cache-hit != 'true'
         run: mkdir -p .alert && touch .alert/reported
-      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key != '' && steps.seen.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: .alert
           key: alert-${{ steps.check.outputs.signature }}-${{ steps.check.outputs.day }}
-      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit == 'true'
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key != '' && steps.seen.outputs.cache-hit == 'true'
         run: 'echo "::warning::Still failing, already reported today: $MESSAGE"'
         env:
           MESSAGE: ${{ steps.check.outputs.message }}
-      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
+      - if: steps.check.outputs.failed == 'true' && steps.pending.outputs.cache-matched-key != '' && steps.seen.outputs.cache-hit != 'true'
         run: echo "::error::$MESSAGE" && exit 1
         env:
           MESSAGE: ${{ steps.check.outputs.message }}
-      # Once healthy again, forget past alerts so a recurrence emails straight away.
+      # Once healthy again, forget past failures so a recurrence is judged afresh.
       - if: steps.check.outputs.failed == 'false'
-        run: gh cache list --key alert- --json key --jq '.[].key' | xargs -r -n1 gh cache delete
+        run: |
+          for prefix in pending- alert-; do
+            gh cache list --key "$prefix" --json key --jq '.[].key' | xargs -r -n1 gh cache delete
+          done
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
