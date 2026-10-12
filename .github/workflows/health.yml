@@ -1,26 +1,61 @@
 name: Check public update health
 on:
+  # The monitored service dispatches this every ten minutes. The hourly schedule
+  # is a backup for when the service itself is down; GitHub may delay or drop it.
   schedule:
-    - cron: '2/5 * * * *'
+    - cron: '17 * * * *'
   workflow_dispatch: {}
 permissions:
   contents: read
+  actions: write # alert markers are stored in, and cleared from, the Actions cache
 concurrency:
   group: public-health
   cancel-in-progress: false
 jobs:
   health:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: node --test check.test.mjs
-      - run: node check.mjs
+      - id: check
+        run: node check.mjs
         env:
           MONITOR_URL: ${{ vars.MONITOR_URL }}
           EXPECTED_RESULTS: ${{ vars.EXPECTED_RESULTS }}
           EXPECTED_CHANNELS: ${{ vars.EXPECTED_CHANNELS }}
           REQUIRED_SETTINGS: ${{ vars.REQUIRED_SETTINGS }}
+          EXPIRY_DOMAIN: ${{ vars.EXPIRY_DOMAIN }}
+      # A failed run sends the email. The same failure fails (and emails) once a
+      # day while it lasts; a different failure fails at once.
+      - id: seen
+        if: steps.check.outputs.failed == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .alert
+          key: alert-${{ steps.check.outputs.signature }}-${{ steps.check.outputs.day }}
+          lookup-only: true
+      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
+        run: mkdir -p .alert && touch .alert/reported
+      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .alert
+          key: alert-${{ steps.check.outputs.signature }}-${{ steps.check.outputs.day }}
+      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit == 'true'
+        run: echo "::warning::Still failing, already reported today: $MESSAGE"
+        env:
+          MESSAGE: ${{ steps.check.outputs.message }}
+      - if: steps.check.outputs.failed == 'true' && steps.seen.outputs.cache-hit != 'true'
+        run: echo "::error::$MESSAGE" && exit 1
+        env:
+          MESSAGE: ${{ steps.check.outputs.message }}
+      # Once healthy again, forget past alerts so a recurrence emails straight away.
+      - if: steps.check.outputs.failed == 'false'
+        run: gh cache list --key alert- --json key --jq '.[].key' | xargs -r -n1 gh cache delete
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

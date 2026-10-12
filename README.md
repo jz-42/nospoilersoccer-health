@@ -4,4 +4,8 @@ A small generic monitor for a public HTTPS JSON health endpoint. Contains no app
 
 Configure repository variables MONITOR_URL, EXPECTED_RESULTS, EXPECTED_CHANNELS and optionally REQUIRED_SETTINGS (a JSON object). The contract checks HTTP status, explicit health problems/warnings, actual successful result/source timestamps, completeness, clock anomalies and required runtime flags. Retries and network waits are bounded.
 
-Run `node --test check.test.mjs` locally. The workflow requests checks every five minutes using standard public-repository runners. GitHub can delay/drop schedules or experience outages, so this is not a promise of continuous availability. Failure notifications follow the owner's GitHub notification preferences; this monitor never dispatches work to a private repository or needs an app token.
+Optionally set EXPIRY_DOMAIN to check, about hourly (and on every scheduled run), that the domain registration (via the registry's RDAP record) is at least 30 days from expiry and the TLS certificate at least 14 days.
+
+Run `node --test check.test.mjs` locally. The monitored service dispatches the workflow about every ten minutes; an hourly schedule is a backup for when the service itself is down. GitHub can delay or drop schedules or have outages, so this is not a promise of continuous availability.
+
+A failed run is the alert: GitHub emails the run's actor according to their notification settings. The same failure (ignoring changing numbers) fails once per UTC day while it lasts, and later runs pass with a warning annotation; a different failure fails immediately. Alert markers live in the Actions cache and are cleared after a healthy run. The monitor never dispatches work to a private repository and holds no app token.
