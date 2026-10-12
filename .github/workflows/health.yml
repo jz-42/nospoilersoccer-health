@@ -1,0 +1,26 @@
+name: Check public update health
+on:
+  schedule:
+    - cron: '2/5 * * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: public-health
+  cancel-in-progress: false
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test check.test.mjs
+      - run: node check.mjs
+        env:
+          MONITOR_URL: ${{ vars.MONITOR_URL }}
+          EXPECTED_RESULTS: ${{ vars.EXPECTED_RESULTS }}
+          EXPECTED_CHANNELS: ${{ vars.EXPECTED_CHANNELS }}
+          REQUIRED_SETTINGS: ${{ vars.REQUIRED_SETTINGS }}
